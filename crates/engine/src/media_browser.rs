@@ -73,6 +73,17 @@ impl Browser for FsBrowser {
     fn home(&self) -> String {
         home()
     }
+    fn places(&self) -> Vec<(String, String)> {
+        #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
+        let mut out = vec![("Home".into(), self.home())];
+        #[cfg(target_os = "android")]
+        for (label, path) in android_storage_places() {
+            if out.iter().all(|(_, existing)| existing != &path) {
+                out.push((label, path));
+            }
+        }
+        out
+    }
     fn list(&self, dir: &str, importable_only: bool) -> Result<Vec<Entry>, String> {
         list(dir, importable_only)
     }
@@ -226,7 +237,75 @@ pub fn kind_of(path: &str) -> Option<&'static str> {
 
 /// The user's home folder (or `/`).
 pub fn home() -> String {
-    std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| "/".into())
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .or_else(|_| {
+            #[cfg(target_os = "android")]
+            {
+                Ok::<String, std::env::VarError>(android_default_home())
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                Err(std::env::VarError::NotPresent)
+            }
+        })
+        .unwrap_or_else(|_| "/".into())
+}
+
+#[cfg(target_os = "android")]
+fn android_default_home() -> String {
+    let root = std::env::var("EXTERNAL_STORAGE").unwrap_or_else(|_| "/storage/emulated/0".into());
+    for candidate in [
+        root.clone(),
+        format!("{root}/Download"),
+        format!("{root}/DCIM"),
+        format!("{root}/Movies"),
+        format!("{root}/Pictures"),
+        format!("{root}/Documents"),
+    ] {
+        if std::fs::read_dir(&candidate).is_ok() {
+            return candidate;
+        }
+    }
+    if let Ok(cfg) = std::env::var("EFFECTCRAFT_CONFIG_DIR") {
+        let imported = format!("{cfg}/Imported");
+        let _ = std::fs::create_dir_all(&imported);
+        if std::fs::read_dir(&imported).is_ok() {
+            return imported;
+        }
+    }
+    root
+}
+
+/// Standard Android shared-storage folders shown in the Media Browser sidebar when readable.
+#[cfg(target_os = "android")]
+fn android_storage_places() -> Vec<(String, String)> {
+    let root = std::env::var("EXTERNAL_STORAGE").unwrap_or_else(|_| "/storage/emulated/0".into());
+    let mut candidates = Vec::new();
+    if let Ok(cfg) = std::env::var("EFFECTCRAFT_CONFIG_DIR") {
+        let imported = format!("{cfg}/Imported");
+        let projects = format!("{cfg}/Projects");
+        let _ = std::fs::create_dir_all(&imported);
+        let _ = std::fs::create_dir_all(&projects);
+        candidates.push(("Imported".to_string(), imported));
+        candidates.push(("Projects".to_string(), projects));
+    }
+    for (label, path) in [
+        ("Shared Storage", root.clone()),
+        ("Download", format!("{root}/Download")),
+        ("DCIM", format!("{root}/DCIM")),
+        ("Camera", format!("{root}/DCIM/Camera")),
+        ("Movies", format!("{root}/Movies")),
+        ("Pictures", format!("{root}/Pictures")),
+        ("Documents", format!("{root}/Documents")),
+        ("Music", format!("{root}/Music")),
+    ] {
+        candidates.push((label.to_string(), path));
+    }
+    candidates
+        .into_iter()
+        .filter(|(_, p)| std::path::Path::new(p).is_dir())
+        .collect()
 }
 
 fn unix(t: std::io::Result<std::time::SystemTime>) -> Option<u64> {

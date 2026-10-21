@@ -1026,9 +1026,18 @@ fn layout_inner(
             }
         }
         DockNode::Split { vertical, size, a, b } => {
-            let axis = if *vertical { SplitAxis::Vertical } else { SplitAxis::Horizontal };
-            let Some(split) = split_rect(rect, axis, size.shared(), t.gap, 20.0) else { return };
-            let response = resize_handle(split.divider, *vertical, path, t).value(split.first_size(), 0.0..=split.available()).show(ui);
+            let win = ui.ctx().content_rect();
+            let portrait = win.height() > win.width() * 1.05 && win.width() < 780.0;
+            let eff_vertical = *vertical || (portrait && tree_path.is_empty());
+            let eff_size = match (*size, portrait, *vertical, tree_path.is_empty()) {
+                (_, true, false, true) => SharedSplitSize::Ratio(0.74),
+                (SplitSize::FixedA(v), true, false, false) => SharedSplitSize::FixedFirst(v.min((rect.width() * 0.38).max(110.0))),
+                (SplitSize::FixedB(v), true, false, false) => SharedSplitSize::FixedSecond(v.min((rect.width() * 0.38).max(110.0))),
+                _ => size.shared(),
+            };
+            let axis = if eff_vertical { SplitAxis::Vertical } else { SplitAxis::Horizontal };
+            let Some(split) = split_rect(rect, axis, eff_size, t.gap, 20.0) else { return };
+            let response = resize_handle(split.divider, eff_vertical, path, t).value(split.first_size(), 0.0..=split.available()).show(ui);
             reg.add(&format!("dock.gutter.{path}"), response.response.rect, "gutter");
             if response.delta != 0.0
                 && let Some(resized) = split.resized(size.shared(), response.delta, 40.0)

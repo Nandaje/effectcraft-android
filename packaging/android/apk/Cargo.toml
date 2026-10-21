@@ -1,0 +1,24 @@
+[package]
+name = "effectcraft-android-apk"
+description = "EffectCraft Android NativeActivity shared library (libeffectcraft.so)"
+version = "0.13.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "effectcraft"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+effectcraft = { path = "../../../apps/effectcraft" }
+log = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[patch.crates-io]
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "ca50d63b773c99f96e75c77ce5a1d21e7c9cda0d", version = "=0.7.2" }

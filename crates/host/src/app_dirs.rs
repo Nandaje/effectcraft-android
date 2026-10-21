@@ -41,9 +41,17 @@ pub struct DataDir {
     pub warning: Option<String>,
 }
 
+static DIR: OnceLock<DataDir> = OnceLock::new();
+
+/// Set the process's data directory before [`current`] is first called (used by Android's
+/// `NativeActivity` entry point to pass `AndroidApp::external_data_path` / `internal_data_path`
+/// without `unsafe` environment mutation).
+pub fn init_override(dir: PathBuf) {
+    let _ = DIR.set(DataDir { dir: Some(dir), mode: Mode::Override, warning: None });
+}
+
 /// The data directory for this process, resolved once (the portable check probes the disk).
 pub fn current() -> &'static DataDir {
-    static DIR: OnceLock<DataDir> = OnceLock::new();
     DIR.get_or_init(|| {
         let exe = std::env::current_exe().ok();
         let d = resolve(|k| std::env::var_os(k), exe.as_deref().and_then(Path::parent));
@@ -84,7 +92,11 @@ pub fn platform_dir(env: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> 
     if cfg!(target_os = "windows") {
         return env("APPDATA").map(|a| PathBuf::from(a).join("EffectCraft"));
     }
-    env("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home().map(|h| h.join(".config"))).map(|c| c.join("effectcraft"))
+    let xdg_or_home = env("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home().map(|h| h.join(".config"))).map(|c| c.join("effectcraft"));
+    if cfg!(target_os = "android") {
+        return xdg_or_home.or_else(|| env("EXTERNAL_STORAGE").map(|s| PathBuf::from(s).join("Android/data/ai.storyteller.effectcraft/files")));
+    }
+    xdg_or_home
 }
 
 /// The first portable marker file in `exe_dir`, if any.

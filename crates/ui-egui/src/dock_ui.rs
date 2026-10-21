@@ -532,7 +532,7 @@ impl EffectcraftApp {
             ctx.data_mut(|data| data.remove::<PanelKind>(drag_id()));
             return;
         }
-        let Some(pos) = ctx.pointer_latest_pos() else { return };
+        let Some(pos) = panels::drag_pointer_pos(ctx) else { return };
         // The shared resolver receives groups in paint order; a floating group occludes the dock.
         let targets: Vec<_> = groups
             .iter()

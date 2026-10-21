@@ -84,7 +84,9 @@ pub fn reveal_applied(app: &mut EffectcraftApp, params: &serde_json::Value) {
 /// file dialog for their first empty file parameter and set the file on each; cancelling
 /// leaves the effect without one. Does nothing without a file dialog (tests, agents).
 pub fn choose_files_after_apply(app: &mut EffectcraftApp, applied: &serde_json::Value) {
-    let Some(pick) = app.hooks.pick_files.as_ref() else { return };
+    if app.hooks.pick_files.is_none() && app.hooks.file_dialog_async.is_none() {
+        return;
+    }
     let Some(comp) = app.session.active_comp() else { return };
     let uids: Vec<u64> = applied.get("effects").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_u64()).collect()).unwrap_or_default();
     let mut targets = vec![];
@@ -110,6 +112,10 @@ pub fn choose_files_after_apply(app: &mut EffectcraftApp, applied: &serde_json::
     if targets.is_empty() {
         return;
     }
+    if app.spawn_file_dialog(crate::FileDialog::Open { exts: filters.clone(), many: false }, "__effect.files", "path", json!({"targets": targets})) {
+        return;
+    }
+    let Some(pick) = app.hooks.pick_files.as_ref() else { return };
     let exts: Vec<&str> = filters.iter().map(String::as_str).collect();
     let Some(path) = pick(&exts).into_iter().next() else { return };
     for (layer, prop) in targets {
@@ -485,13 +491,16 @@ fn prop_row(
                     ParamUi::File { filters } => filters.iter().map(String::as_str).collect(),
                     _ => vec![],
                 };
-                match app.hooks.pick_files.as_ref() {
+                let exts_owned: Vec<String> = filters.iter().map(|s| (*s).to_string()).collect();
+                if app.spawn_file_dialog(crate::FileDialog::Open { exts: exts_owned, many: false }, "prop.set", "value", json!({"layer": layer.id.0, "prop": uid})) {
+                } else { match app.hooks.pick_files.as_ref() {
                     Some(pick) => {
                         if let Some(path) = pick(&filters).into_iter().next() {
                             actions.push(("prop.set".into(), json!({"layer": layer.id.0, "prop": uid, "value": path})));
                         }
                     }
                     None => app.ui.status = "no file dialog available: set the path with prop.set".into(),
+                }
                 }
             }
             app.auto.add(&format!("effectControls.prop.{uid}.choose"), br, &prop.name);

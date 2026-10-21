@@ -231,7 +231,7 @@ impl State<'_> {
 
 /// Frames per parallel batch.
 pub(crate) fn batch_size() -> u64 {
-    rayon::current_num_threads().clamp(2, 16) as u64
+    if cfg!(target_os = "android") { 2 } else { rayon::current_num_threads().clamp(2, 16) as u64 }
 }
 
 /// Crop/pad 8-bit RGBA to `w`×`h` (codec rounding).

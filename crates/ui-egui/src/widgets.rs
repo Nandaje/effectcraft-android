@@ -623,6 +623,10 @@ pub fn menu_style(style: &mut egui::Style) {
 
 /// `resp`'s context menu in the app's [`menu_style`] (its submenus inherit it).
 pub fn context_menu(resp: &Response, add_contents: impl FnOnce(&mut Ui)) -> Option<egui::InnerResponse<()>> {
+    if egui::DragAndDrop::payload::<crate::panels::DragPayload>(&resp.ctx).is_some() {
+        egui::Popup::close_all(&resp.ctx);
+        return None;
+    }
     egui::Popup::context_menu(resp).style(menu_style).show(add_contents)
 }
 

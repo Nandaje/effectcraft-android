@@ -786,6 +786,7 @@ fn pre_render(s: &mut Session, p: &Value) -> Result<Value> {
 /// Composition ▸ Save Current Preview…: render the work area of the comp straight to a movie file.
 fn save_current_preview(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_p(p, "path").ok_or_else(|| bad("render.saveCurrentPreview", "missing `path`"))?.to_string();
+    let background = p.get("background").and_then(Value::as_bool).unwrap_or(false);
     let cid = comp_id(s, p)?;
     let format = OutputFormat::from_path(&path).unwrap_or(OutputFormat::H264);
     let exporter = s.exporter.clone().ok_or_else(|| EngineError::Other("export is not available in this build".into()))?;
@@ -795,6 +796,41 @@ fn save_current_preview(s: &mut Session, p: &Value) -> Result<Value> {
     let mut item = RenderQueueItem::new(0, cid);
     item.output = OutputModule::for_format(format);
     item.output.output = path.clone();
+    if background {
+        let project = s.project.clone();
+        let footage = s.footage.clone();
+        let expr = s.expr.clone();
+        let accel = if cfg!(target_os = "android") { None } else { s.accel.clone() };
+        let storage = s.storage_quota.clone();
+        let nested_switches = s.prefs.general.switches_affect_nested_comps;
+        return s.spawn_task("export", "Save Current Preview", false, move |ctl| {
+            let job = crate::ExportJob {
+                project: &project,
+                footage: footage.as_ref(),
+                expr: expr.as_deref(),
+                accel: accel.as_deref(),
+                item: &item,
+                path: &path,
+                storage: storage.as_deref(),
+                label: "Save Current Preview".into(),
+                nested_switches,
+            };
+            let r = exporter
+                .export(&job, &mut |done, total| {
+                    ctl.progress(done, total)
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(Box::new(move |s: &mut Session| {
+                let toast = format!("Saved preview to {}", r.path);
+                s.toast(toast.clone());
+                let mut v = serde_json::to_value(&r).unwrap_or_default();
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("toast".into(), json!(toast));
+                }
+                Ok(v)
+            }))
+        });
+    }
     let job = crate::ExportJob {
         project: &s.project,
         footage: s.footage.as_ref(),

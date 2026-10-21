@@ -1273,9 +1273,9 @@ impl Worker {
         if let (Some(g), Some(a)) = (gpu, r.active_accel())
             && job.src.gpu_display
         {
-            // The browser cannot wait for the GPU to time it (and its CPU path is slow): always
-            // the GPU there.
-            let auto = if cfg!(target_arch = "wasm32") { None } else { r.frame_auto(a, job.comp, true) };
+            // The browser cannot wait for the GPU to time it (and its CPU path is slow), and
+            // Android benefits from keeping compositing on the mobile GPU: always the GPU there.
+            let auto = if cfg!(any(target_arch = "wasm32", target_os = "android")) { None } else { r.frame_auto(a, job.comp, true) };
             if auto.is_none_or(|(p, key)| p.choose(key)) {
                 let t0 = web_time::Instant::now();
                 match g.within_memory(|| g.render_display(&r, job.comp, job.t)) {
