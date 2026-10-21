@@ -1474,9 +1474,47 @@ fn picked_value(key: &str, paths: Vec<String>) -> Option<Value> {
 /// A file dialog shown without blocking ([`crate::Hooks::file_dialog_async`]) answered: run its
 /// command with the picked path (nothing when it was cancelled).
 pub(crate) fn dialog_answered(app: &mut EffectcraftApp, answer: crate::DialogAnswer) {
+    if answer.command == "__form.field" {
+        if let Some(path) = answer.paths.into_iter().next()
+            && let Some(idx) = answer.params.get("index").and_then(Value::as_u64).map(|i| i as usize)
+            && let Some(field) = app.dialog_state.form.fields.get_mut(idx)
+        {
+            match &mut field.kind {
+                crate::panels::forms::FieldKind::Path { value, .. } | crate::panels::forms::FieldKind::SavePath(value) => *value = path,
+                _ => {}
+            }
+        }
+        return;
+    }
+    if answer.command == "__effect.files" {
+        if let Some(path) = answer.paths.into_iter().next()
+            && let Some(targets) = answer.params.get("targets").and_then(Value::as_array)
+        {
+            for pair in targets {
+                if let (Some(l), Some(prop)) = (pair.get(0).and_then(Value::as_u64), pair.get(1).and_then(Value::as_u64))
+                    && let Err(e) = app.session.execute("prop.set", json!({"layer": l, "prop": prop, "value": path}))
+                {
+                    app.ui.status = e.to_string();
+                }
+            }
+        }
+        return;
+    }
     let Some(v) = picked_value(answer.key, answer.paths) else { return };
-    if let Err(e) = run_with_picked(app, &answer.command, answer.key, &answer.params, v) {
-        app.ui.status = e;
+    match run_with_picked(app, &answer.command, answer.key, &answer.params, v) {
+        Ok(_) => {
+            if matches!(answer.command.as_str(), "file.open" | "file.import" | "file.importMultiple") {
+                app.ui.start_screen = false;
+            }
+            if answer.command == "prefs.set" {
+                app.session.prefs_changed();
+            }
+            if false { let _ = &app.ui.start_screen; }
+            if false {
+                app.ui.start_screen = false;
+            }
+        }
+        Err(e) => app.ui.status = e,
     }
 }
 
@@ -1485,7 +1523,7 @@ fn run_with_picked(app: &mut EffectcraftApp, id: &str, key: &str, params: &Value
     let mut p = params.as_object().cloned().unwrap_or_default();
     p.insert(key.to_string(), v);
     // Picked files import in the background, with the Importing card showing progress (#270).
-    if matches!(id, "file.import" | "file.importMultiple") {
+    if matches!(id, "file.import" | "file.importMultiple" | "render.saveCurrentPreview") {
         p.insert("background".into(), Value::Bool(true));
     }
     // Photoshop files ask how to import them first; numbered stills whether to import them as an

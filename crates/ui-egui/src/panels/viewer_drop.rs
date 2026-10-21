@@ -20,7 +20,7 @@ pub(crate) fn show(app: &mut EffectcraftApp, ui: &egui::Ui, painter: &egui::Pain
     if matches!(*payload, DragPayload::Property { .. }) {
         return;
     }
-    let Some(ptr) = ctx.input(|i| i.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(map.area)) else { return };
+    let Some(ptr) = crate::panels::drag_pointer_pos(&ctx).filter(|_| ui.rect_contains_pointer(map.area)) else { return };
     let stroke = Stroke::new(2.0, app.tokens.accent);
     let at = map.to_comp(ptr);
     let actions: Vec<(&str, Value)> = match payload.as_ref() {

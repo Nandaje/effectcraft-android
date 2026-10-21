@@ -55,7 +55,7 @@ impl Launch {
         // Locked by another launch that is still opening its window: not a crash.
         let held = File::open(&marker).is_ok_and(|f| matches!(f.try_lock(), Err(std::fs::TryLockError::WouldBlock)));
         let mut notice = None;
-        if marker.exists() && !held && prefs.startup.window_graphics == "auto" && cfg!(not(target_os = "macos")) {
+        if marker.exists() && !held && prefs.startup.window_graphics == "auto" && cfg!(not(any(target_os = "macos", target_os = "android"))) {
             prefs.startup.window_graphics = "gl".into();
             match std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&prefs_path, prefs.to_json())) {
                 Ok(()) => log::warn!("the last launch stopped as its window opened: switching Window Graphics to OpenGL"),
@@ -154,8 +154,8 @@ mod tests {
         drop(Launch::begin(Some(&dir), false));
         // …makes the next one use OpenGL and say so, once.
         let mut l = Launch::begin(Some(&dir), false);
-        if cfg!(target_os = "macos") {
-            assert_eq!((l.backends, l.notice.is_some()), (None, false), "no OpenGL on macOS");
+        if cfg!(any(target_os = "macos", target_os = "android")) {
+            assert_eq!((l.backends, l.notice.is_some()), (None, false), "no OpenGL fallback on macOS/Android");
         } else {
             assert_eq!(l.backends, Some(Backends::GL));
             assert!(l.notice.is_some());
@@ -182,8 +182,8 @@ mod tests {
         assert!(l.frame_drawn().is_some());
         drop(l);
         let l = Launch::begin(Some(&dir), false);
-        if cfg!(target_os = "macos") {
-            assert_eq!(l.backends, None, "no OpenGL on macOS");
+        if cfg!(any(target_os = "macos", target_os = "android")) {
+            assert_eq!(l.backends, None, "no OpenGL fallback on macOS/Android");
         } else {
             assert_eq!(l.backends, Some(Backends::GL));
             assert!(l.notice.is_some());
@@ -209,7 +209,7 @@ mod tests {
         assert_eq!(Launch::begin(Some(&dir), false).backends, None);
         assert_eq!(window_graphics(&dir), "auto");
         drop(_first);
-        if cfg!(not(target_os = "macos")) {
+        if cfg!(not(any(target_os = "macos", target_os = "android"))) {
             assert_eq!(Launch::begin(Some(&dir), false).backends, Some(Backends::GL), "a real crash still switches");
             opengl_failed(Some(&dir));
             assert_eq!(window_graphics(&dir), "auto");

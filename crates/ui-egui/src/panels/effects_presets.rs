@@ -209,7 +209,7 @@ fn effect_row(
     if resp.double_clicked() {
         *apply = Some(Apply::Effect(e.id.to_string()));
     }
-    if resp.drag_started() {
+    if crate::panels::row_drag_started(&ctx, &resp, Rect::from_min_max(r.min, pos2(star.min.x, r.max.y)).intersect(list)) {
         egui::DragAndDrop::set_payload(&ctx, DragPayload::Effect(e.id.to_string()));
     }
 }
@@ -241,7 +241,7 @@ fn preset_row(
     icons::paint(lp, Rect::from_center_size(pos2(r.min.x + 58.0, r.center().y), vec2(12.0, 12.0)), Icon::Keyframe, t.text_dim);
     highlighted(lp, pos2(r.min.x + 70.0, r.center().y), name, query, &t);
     app.auto.add(auto_id, r, name);
-    if resp.drag_started() {
+    if crate::panels::row_drag_started(ui.ctx(), &resp, r.intersect(list)) {
         egui::DragAndDrop::set_payload(ui.ctx(), DragPayload::Preset { preset: preset.clone(), name: name.to_string() });
     }
     if resp.double_clicked() {
@@ -460,7 +460,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         DragPayload::Effect(id) => Some(effectcraft_engine::effects::find(id).map(|e| crate::i18n::effects::name(e.id, e.name)).unwrap_or_default()),
         DragPayload::Preset { name, .. } => Some(name.clone()),
         _ => None,
-    }) && let Some(pos) = ctx.pointer_hover_pos()
+    }) && let Some(pos) = crate::panels::drag_pointer_pos(&ctx)
     {
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("dnd-fx")));
         let g = painter.layout_no_wrap(name, Tokens::ui(12.0), t.text);

@@ -119,6 +119,35 @@ impl PresetRef {
     }
 }
 
+/// Pointer position during a drag or on the release frame.
+///
+/// On touchscreens (`winit::event::TouchPhase::Ended`), `egui-winit` emits `PointerButton { pressed: false }`
+/// followed immediately by `PointerGone` in the same frame, clearing `hover_pos()` (`latest_pos()`)
+/// while preserving `interact_pos()`. Checking `interact_pos()` first ensures drop targets and drag
+/// ghosts see the release coordinates on touch devices as well as mice.
+pub(crate) fn drag_pointer_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
+    ctx.input(|i| i.pointer.interact_pos().or_else(|| i.pointer.hover_pos()))
+}
+
+/// Whether a row's drag has started, either via `resp.drag_started()` or via a touch drag originating
+/// inside `row_rect` (which recovers when `egui`'s 300 ms `is_long_touch()` cleared `potential_drag_id`
+/// or when a touch-down and swipe were coalesced into one frame).
+pub(crate) fn row_drag_started(ctx: &egui::Context, resp: &egui::Response, row_rect: Rect) -> bool {
+    let started = resp.drag_started()
+        || (!ctx.egui_wants_keyboard_input()
+            && egui::DragAndDrop::payload::<DragPayload>(ctx).is_none()
+            && ctx.input(|i| {
+                i.pointer.primary_down()
+                    && !i.pointer.any_released()
+                    && i.pointer.press_origin().is_some_and(|o| row_rect.contains(o))
+                    && i.pointer.interact_pos().zip(i.pointer.press_origin()).is_some_and(|(p, o)| p.distance(o) > 6.0)
+            }));
+    if started {
+        egui::Popup::close_all(ctx);
+    }
+    started
+}
+
 /// Layers carried by a Project item drag. Dragging a selected item uses the
 /// complete selection, while dragging an unselected item uses only that item.
 /// Folders and data files are not composition layers.

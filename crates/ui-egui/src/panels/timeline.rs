@@ -1389,30 +1389,49 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, "(no composition)", Tokens::ui(12.0), t.text_faint);
         // Dropping footage into an empty Timeline should create its first composition,
         // just like dropping onto the Project panel's New Composition button (#649).
-        if let Some(crate::panels::DragPayload::Item(dragged)) = egui::DragAndDrop::payload::<crate::panels::DragPayload>(&ctx).as_deref()
+        if let Some(payload) = egui::DragAndDrop::payload::<crate::panels::DragPayload>(&ctx)
             && ui.rect_contains_pointer(rect)
         {
-            let items: Vec<ItemId> = crate::panels::project_drop_items(app, *dragged)
-                .into_iter()
-                .map(ItemId)
-                .filter(|id| {
-                    app.session.project.item(*id).is_some_and(|item| match &item.kind {
-                        effectcraft_engine::project::ItemKind::Footage(footage) => footage.kind != effectcraft_engine::project::FootageKind::Data,
-                        effectcraft_engine::project::ItemKind::Solid(_) | effectcraft_engine::project::ItemKind::Comp(_) => true,
-                        _ => false,
-                    })
-                })
-                .collect();
-            if !items.is_empty() {
-                ui.painter().rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
-                app.auto.add("timeline.newCompDrop", rect, "Drop footage to create a composition");
-                if ctx.input(|i| i.pointer.any_released()) {
-                    app.session.state.project_selection = items;
-                    if let Err(e) = crate::menus::invoke(app, &ctx, "file.newCompFromSelection", json!({})) {
-                        app.ui.status = e;
+            match payload.as_ref() {
+                crate::panels::DragPayload::Item(dragged) => {
+                    let items: Vec<ItemId> = crate::panels::project_drop_items(app, *dragged)
+                        .into_iter()
+                        .map(ItemId)
+                        .filter(|id| {
+                            app.session.project.item(*id).is_some_and(|item| match &item.kind {
+                                effectcraft_engine::project::ItemKind::Footage(footage) => footage.kind != effectcraft_engine::project::FootageKind::Data,
+                                effectcraft_engine::project::ItemKind::Solid(_) | effectcraft_engine::project::ItemKind::Comp(_) => true,
+                                _ => false,
+                            })
+                        })
+                        .collect();
+                    if !items.is_empty() {
+                        ui.painter().rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+                        app.auto.add("timeline.newCompDrop", rect, "Drop footage to create a composition");
+                        if ctx.input(|i| i.pointer.any_released()) {
+                            app.session.state.project_selection = items;
+                            if let Err(e) = crate::menus::invoke(app, &ctx, "file.newCompFromSelection", json!({})) {
+                                app.ui.status = e;
+                            }
+                            egui::DragAndDrop::clear_payload(&ctx);
+                        }
                     }
-                    egui::DragAndDrop::clear_payload(&ctx);
                 }
+                crate::panels::DragPayload::Files(paths) if !paths.is_empty() => {
+                    ui.painter().rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+                    app.auto.add("timeline.newCompDrop", rect, "Drop footage to create a composition");
+                    if ctx.input(|i| i.pointer.any_released()) {
+                        if let Err(e) = crate::menus::invoke(app, &ctx, "mediaBrowser.import", json!({"paths": paths})) {
+                            app.ui.status = e;
+                        } else if app.session.active_comp_id().is_none() && !app.session.state.project_selection.is_empty() {
+                            if let Err(e) = crate::menus::invoke(app, &ctx, "file.newCompFromSelection", json!({})) {
+                                app.ui.status = e;
+                            }
+                        }
+                        egui::DragAndDrop::clear_payload(&ctx);
+                    }
+                }
+                _ => {}
             }
         }
         return;
@@ -2776,7 +2795,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 let name_rect = Rect::from_min_max(pos2(name_x, r.min.y), pos2(cw.switches - 2.0, r.max.y));
                 let name_resp = ui.interact(name_rect, egui::Id::new(("pname", uid)), Sense::click_and_drag());
                 app.auto.add(&format!("timeline.prop.{uid}.name"), name_rect, &prop.name);
-                if name_resp.drag_started() {
+                if crate::panels::row_drag_started(&ctx, &name_resp, name_rect.intersect(rows_rect)) {
                     // Drop on the Essential Graphics panel to expose the property.
                     egui::DragAndDrop::set_payload(&ctx, crate::panels::DragPayload::Property { layer: layer.id.0, prop: *uid });
                 }
@@ -3035,7 +3054,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // Pick whips: a line follows the pointer; releasing over a row links to it (an expression's
     // or a property's, also over a property in Effect Controls).
     if let Some((kind, src_layer, src_prop, start)) = ctx.data(|d| d.get_temp::<PickWhip>(pick_whip_id())) {
-        let ptr = ctx.input(|i| i.pointer.latest_pos()).unwrap_or(start);
+        let ptr = crate::panels::drag_pointer_pos(&ctx).unwrap_or(start);
         let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("tl-pickwhip-line")));
         fg.line_segment([start, ptr], Stroke::new(1.5, t.accent));
         fg.circle_stroke(ptr, 4.0, Stroke::new(1.5, t.accent));
@@ -3353,7 +3372,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // (Shift: at the current time).
     if let Some(payload) = egui::DragAndDrop::payload::<crate::panels::DragPayload>(&ctx)
         && !matches!(*payload, crate::panels::DragPayload::Property { .. })
-        && let Some(ptr) = ctx.input(|i| i.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(rows_rect))
+        && let Some(ptr) = crate::panels::drag_pointer_pos(&ctx).filter(|_| ui.rect_contains_pointer(rows_rect))
     {
         let released = ctx.input(|i| i.pointer.any_released());
         if matches!(payload.as_ref(), crate::panels::DragPayload::Effect(_) | crate::panels::DragPayload::Preset { .. }) {
