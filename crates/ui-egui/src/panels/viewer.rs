@@ -2616,30 +2616,49 @@ fn empty_state(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // just like dropping it onto an empty Timeline (#684). Multiple selected
     // items use the existing New Comp from Selection dialog.
     let ctx = ui.ctx().clone();
-    if let Some(crate::panels::DragPayload::Item(dragged)) = egui::DragAndDrop::payload::<crate::panels::DragPayload>(&ctx).as_deref()
+    if let Some(payload) = egui::DragAndDrop::payload::<crate::panels::DragPayload>(&ctx)
         && ui.rect_contains_pointer(rect)
     {
-        let items: Vec<effectcraft_engine::project::ItemId> = crate::panels::project_drop_items(app, *dragged)
-            .into_iter()
-            .map(effectcraft_engine::project::ItemId)
-            .filter(|id| {
-                app.session.project.item(*id).is_some_and(|item| match &item.kind {
-                    effectcraft_engine::project::ItemKind::Footage(f) => f.kind != effectcraft_engine::project::FootageKind::Data,
-                    effectcraft_engine::project::ItemKind::Solid(_) | effectcraft_engine::project::ItemKind::Comp(_) => true,
-                    _ => false,
-                })
-            })
-            .collect();
-        if !items.is_empty() {
-            p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
-            app.auto.add("viewer.newCompDrop", rect, "Drop footage to create a composition");
-            if ctx.input(|i| i.pointer.any_released()) {
-                app.session.state.project_selection = items;
-                if let Err(e) = crate::menus::invoke(app, &ctx, "file.newCompFromSelection", json!({})) {
-                    app.ui.status = e;
+        match payload.as_ref() {
+            crate::panels::DragPayload::Item(dragged) => {
+                let items: Vec<effectcraft_engine::project::ItemId> = crate::panels::project_drop_items(app, *dragged)
+                    .into_iter()
+                    .map(effectcraft_engine::project::ItemId)
+                    .filter(|id| {
+                        app.session.project.item(*id).is_some_and(|item| match &item.kind {
+                            effectcraft_engine::project::ItemKind::Footage(f) => f.kind != effectcraft_engine::project::FootageKind::Data,
+                            effectcraft_engine::project::ItemKind::Solid(_) | effectcraft_engine::project::ItemKind::Comp(_) => true,
+                            _ => false,
+                        })
+                    })
+                    .collect();
+                if !items.is_empty() {
+                    p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+                    app.auto.add("viewer.newCompDrop", rect, "Drop footage to create a composition");
+                    if ctx.input(|i| i.pointer.any_released()) {
+                        app.session.state.project_selection = items;
+                        if let Err(e) = crate::menus::invoke(app, &ctx, "file.newCompFromSelection", json!({})) {
+                            app.ui.status = e;
+                        }
+                        egui::DragAndDrop::clear_payload(&ctx);
+                    }
                 }
-                egui::DragAndDrop::clear_payload(&ctx);
             }
+            crate::panels::DragPayload::Files(paths) if !paths.is_empty() => {
+                p.rect_stroke(rect.shrink(2.0), 0.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
+                app.auto.add("viewer.newCompDrop", rect, "Drop footage to create a composition");
+                if ctx.input(|i| i.pointer.any_released()) {
+                    if let Err(e) = crate::menus::invoke(app, &ctx, "mediaBrowser.import", json!({"paths": paths})) {
+                        app.ui.status = e;
+                    } else if app.session.active_comp_id().is_none() && !app.session.state.project_selection.is_empty() {
+                        if let Err(e) = crate::menus::invoke(app, &ctx, "file.newCompFromSelection", json!({})) {
+                            app.ui.status = e;
+                        }
+                    }
+                    egui::DragAndDrop::clear_payload(&ctx);
+                }
+            }
+            _ => {}
         }
     }
 }

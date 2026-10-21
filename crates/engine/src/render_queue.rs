@@ -376,7 +376,10 @@ impl Session {
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from);
         let base = base.or_else(|| default_output_base(home));
         // (the web has no working directory: relative outputs land in its virtual root)
-        let base = base.or_else(|| std::env::current_dir().ok()).or_else(|| cfg!(target_arch = "wasm32").then(|| "/".into()))?;
+        let base = base
+            .or_else(|| std::env::current_dir().ok().filter(|d| cfg!(target_arch = "wasm32") || d != std::path::Path::new("/")))
+            .or_else(|| cfg!(target_os = "android").then(std::env::temp_dir))
+            .or_else(|| cfg!(target_arch = "wasm32").then(|| "/".into()))?;
         Some(base.join(path).to_string_lossy().to_string())
     }
 
@@ -507,7 +510,7 @@ impl Session {
             project: self.project.clone(),
             footage: self.footage.clone(),
             expr: self.expr.clone(),
-            accel: self.accel.clone(),
+            accel: if !wait && cfg!(target_os = "android") { None } else { self.accel.clone() },
             exporter,
             storage: self.storage_quota.clone(),
             items,
@@ -521,6 +524,7 @@ impl Session {
             let sh = shared.clone();
             let thread = std::thread::Builder::new()
                 .name("render-queue".into())
+                .stack_size(8 * 1024 * 1024)
                 .spawn(move || {
                     let pending: Vec<u64> = work.items.iter().filter_map(|modules| modules.first().map(|(item, _)| item.id)).collect();
                     if let Err(error) = crate::guard::guarded("render worker", || {

@@ -38,13 +38,13 @@ const EXT_ENTRIES: &[&str] = &["classic3d"];
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 /// Uploaded layer buffers kept on the GPU by default (bytes; [`GpuContext::set_upload_budget`]).
-const UPLOAD_BUDGET: usize = 1536 << 20;
+const UPLOAD_BUDGET: usize = if cfg!(target_os = "android") { 128 << 20 } else { 1536 << 20 };
 
 /// Working textures kept for reuse once their last image is dropped (bytes).
-const POOL_BUDGET: usize = 768 << 20;
+const POOL_BUDGET: usize = if cfg!(target_os = "android") { 128 << 20 } else { 768 << 20 };
 
 /// Readback staging buffers kept for reuse across sizes (bytes).
-const STAGING_BUDGET: u64 = 256 << 20;
+const STAGING_BUDGET: u64 = if cfg!(target_os = "android") { 64 << 20 } else { 256 << 20 };
 
 /// A GPU image: premultiplied RGBA f32 in a texture (cheap to clone; immutable once written).
 /// Working images come from the context's texture pool and go back to it when the last clone

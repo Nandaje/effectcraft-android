@@ -72,7 +72,11 @@ pub(crate) fn map_frames_while<I: Send, T: Send>(
     let Some(n) = cap.map(|n| n.max(1)).filter(|_| capped()) else {
         return ks.into_par_iter().map(|k| encode(k, render(k))).collect();
     };
-    let window = n.max(rayon::current_num_threads());
+    let window = if cfg!(target_os = "android") {
+        n.min(2)
+    } else {
+        n.max(rayon::current_num_threads())
+    };
     let mut out = Vec::with_capacity(ks.len());
     for (w, win) in ks.chunks(window).enumerate() {
         if !capped() {

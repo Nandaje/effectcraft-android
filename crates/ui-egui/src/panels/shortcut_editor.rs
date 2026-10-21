@@ -300,6 +300,7 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             let b = ui.button(tr("Import..."));
             app.auto.add("shortcuts.import", b.rect, "Import");
             if b.clicked()
+                && !app.spawn_file_dialog(crate::FileDialog::Open { exts: vec!["json".into()], many: false }, "shortcuts.import", "path", json!({}))
                 && let Some(p) = app.hooks.pick_files.as_ref().and_then(|f| f(&["json"]).into_iter().next())
             {
                 run.push(("shortcuts.import".into(), json!({"path": p})));
@@ -307,6 +308,12 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             let b = ui.button(tr("Export..."));
             app.auto.add("shortcuts.export", b.rect, "Export");
             if b.clicked()
+                && !app.spawn_file_dialog(
+                    crate::FileDialog::Save { default: format!("{active}.json"), ext: "json".into(), project: false },
+                    "shortcuts.export",
+                    "path",
+                    json!({"preset": &active}),
+                )
                 && let Some(p) = app.hooks.pick_save_file.as_ref().and_then(|f| f(&format!("{active}.json"), "json"))
             {
                 run.push(("shortcuts.export".into(), json!({"preset": active, "path": p})));

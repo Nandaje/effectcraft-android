@@ -548,7 +548,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         DragPayload::Item(i) => Some(i),
         _ => None,
     });
-    let hover_y = ctx.pointer_hover_pos().filter(|p| list.contains(*p)).map(|p| p.y);
+    let hover_y = crate::panels::drag_pointer_pos(&ctx).filter(|p| list.contains(*p)).map(|p| p.y);
     let mut drop_row: Option<ItemId> = None;
     let mut actions: Vec<(String, serde_json::Value)> = vec![];
     // Vertical scrolling: only the rows in view are drawn (and registered), so a project with
@@ -843,7 +843,8 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 _ => {}
             }
         }
-        if resp.drag_started() {
+        let drag_rect = Rect::from_min_max(r.min, pos2((r.max.x - if max_scroll > 0.0 { 8.0 } else { 0.0 }).max(r.min.x), r.max.y)).intersect(list);
+        if crate::panels::row_drag_started(&ctx, &resp, drag_rect) {
             egui::DragAndDrop::set_payload(&ctx, DragPayload::Item(id.0));
         }
         // Right-clicking an item selects it (After Effects): the menu's File commands act on the
@@ -962,7 +963,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     }
     // Drag ghost.
     if let Some(DragPayload::Item(iid)) = egui::DragAndDrop::payload::<DragPayload>(&ctx).as_deref()
-        && let Some(pos) = ctx.pointer_hover_pos()
+        && let Some(pos) = crate::panels::drag_pointer_pos(&ctx)
         && let Some(it) = app.session.project.item(ItemId(*iid))
     {
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("dnd-ghost")));
@@ -1054,7 +1055,9 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         app.session.state.project_selection.clear();
     }
     let box_id = egui::Id::new("proj-marquee");
-    if let (Some(start), Some(end)) = (ctx.input(|i| i.pointer.press_origin()), empty.interact_pointer_pos())
+    if egui::DragAndDrop::payload::<DragPayload>(&ctx).is_some() {
+        ctx.data_mut(|d| d.remove::<Rect>(box_id));
+    } else if let (Some(start), Some(end)) = (ctx.input(|i| i.pointer.press_origin()), empty.interact_pointer_pos())
         && empty.dragged()
     {
         let b = Rect::from_two_pos(start, end).intersect(list);
@@ -1293,5 +1296,104 @@ mod tests {
         set_column(&mut cols, "path", true);
         set_column(&mut cols, "size", false);
         assert_eq!(cols, ["type", "duration", "fps", "path", "comment"]);
+    }
+
+    #[test]
+    fn touch_drag_from_project_to_composition_viewer_drops_even_after_long_press_and_pointer_gone() {
+        use effectcraft_engine::project::{Footage, FootageKind};
+        let mut session = effectcraft_engine::Session::default();
+        let make_footage = |name: &str| {
+            ItemKind::Footage(Footage {
+                path: format!("/tmp/{name}"),
+                kind: FootageKind::Still,
+                width: 320,
+                height: 180,
+                has_video: true,
+                ..Default::default()
+            })
+        };
+        let proj = std::sync::Arc::make_mut(&mut session.project);
+        let clip_a = proj.add_item("clip_a.png", Label::Aqua, None, make_footage("clip_a.png"));
+        let clip_b = proj.add_item("clip_b.png", Label::Aqua, None, make_footage("clip_b.png"));
+        let mut app = EffectcraftApp::new(session);
+        app.ui.start_screen = false;
+
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx, &app.tokens, "en");
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 720.0));
+        let proj_rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(360.0, 720.0));
+        let comp_rect = Rect::from_min_size(pos2(360.0, 0.0), vec2(920.0, 720.0));
+        let run_frame = |app: &mut EffectcraftApp, time: f64, events: Vec<egui::Event>| {
+            let raw = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                app.auto.elements.clear();
+                super::show(app, ui, proj_rect);
+                crate::panels::viewers::show(app, ui, 0, comp_rect);
+            });
+            out.textures_delta.clear();
+        };
+
+        run_frame(&mut app, 0.0, vec![]);
+        let item_center = |app: &EffectcraftApp, id: ItemId| -> egui::Pos2 {
+            let r = app.auto.find(&format!("project.item.{}.name", id.0)).unwrap().rect;
+            pos2(r[0] + r[2] * 0.5, r[1] + r[3] * 0.5)
+        };
+        let viewer_center = comp_rect.center();
+
+        // 1. Touch-drag clip_a onto the empty Composition viewer after holding >300ms (long-touch)
+        // and releasing with PointerButton(false) + PointerGone in the same frame (TouchPhase::Ended).
+        let start_a = item_center(&app, clip_a);
+        run_frame(
+            &mut app,
+            0.1,
+            vec![
+                egui::Event::PointerMoved(start_a),
+                egui::Event::PointerButton { pos: start_a, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+            ],
+        );
+        // Hold > 0.3s so egui's is_long_touch() fires before the finger moves.
+        run_frame(&mut app, 0.5, vec![egui::Event::PointerMoved(start_a)]);
+        // Slide finger to the Composition viewer.
+        run_frame(&mut app, 0.6, vec![egui::Event::PointerMoved(viewer_center)]);
+        // Lift finger (TouchPhase::Ended emits PointerButton { pressed: false } + PointerGone).
+        run_frame(
+            &mut app,
+            0.7,
+            vec![
+                egui::Event::PointerButton { pos: viewer_center, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
+                egui::Event::PointerGone,
+            ],
+        );
+        assert!(app.session.active_comp().is_some(), "dropping footage onto the empty Composition viewer should create a composition");
+        assert_eq!(app.session.active_comp().unwrap().layers.len(), 1);
+
+        // 2. Touch-drag clip_b onto the now-open Composition viewer (`viewer_drop::show`).
+        run_frame(&mut app, 1.0, vec![]);
+        let start_b = item_center(&app, clip_b);
+        run_frame(
+            &mut app,
+            1.1,
+            vec![
+                egui::Event::PointerMoved(start_b),
+                egui::Event::PointerButton { pos: start_b, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE },
+            ],
+        );
+        run_frame(&mut app, 1.5, vec![egui::Event::PointerMoved(start_b)]);
+        run_frame(&mut app, 1.6, vec![egui::Event::PointerMoved(viewer_center)]);
+        run_frame(
+            &mut app,
+            1.7,
+            vec![
+                egui::Event::PointerButton { pos: viewer_center, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE },
+                egui::Event::PointerGone,
+            ],
+        );
+        let layers: Vec<&str> = app.session.active_comp().unwrap().layers.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(layers, ["clip_b.png", "clip_a.png"]);
     }
 }

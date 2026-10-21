@@ -200,14 +200,15 @@ pub fn media_browser(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
         }
         let name = if e.name.chars().count() > 20 { format!("{}…", e.name.chars().take(19).collect::<String>()) } else { e.name.clone() };
         lp.text(pos2(r.min.x + 8.0, r.max.y - 12.0), Align2::LEFT_CENTER, name, Tokens::ui(11.5), t.text);
-        if resp.double_clicked() {
+        let activated = resp.double_clicked() || (cfg!(target_os = "android") && resp.clicked());
+        if activated {
             if e.is_dir {
                 actions.push(("mediaBrowser.go", json!({"path": e.path})));
             } else if e.kind.is_some() {
                 actions.push(("mediaBrowser.import", json!({"paths": [e.path]})));
             }
         }
-        if resp.drag_started() && !e.is_dir && e.kind.is_some() {
+        if crate::panels::row_drag_started(&ctx, &resp, r.intersect(list)) && !e.is_dir && e.kind.is_some() {
             egui::DragAndDrop::set_payload(&ctx, DragPayload::Files(vec![e.path.clone()]));
         }
         crate::widgets::context_menu(&resp, |ui| {

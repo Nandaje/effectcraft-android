@@ -141,7 +141,7 @@ impl Session {
             run();
             None
         } else {
-            Some(std::thread::Builder::new().name(format!("task-{kind}")).spawn(run).map_err(|e| crate::EngineError::Other(e.to_string()))?)
+            Some(std::thread::Builder::new().name(format!("task-{kind}")).stack_size(8 * 1024 * 1024).spawn(run).map_err(|e| crate::EngineError::Other(e.to_string()))?)
         };
         self.tasks.push(Task { id, kind, label, ctl, started: web_time::Instant::now(), result, thread });
         if wait {

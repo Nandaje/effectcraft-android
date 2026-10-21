@@ -891,7 +891,10 @@ pub fn show_form(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
     if let Some(i) = browse
         && let Some(FieldKind::Path { value, exts }) = f.fields.get_mut(i).map(|f| &mut f.kind)
     {
+        let exts_owned: Vec<String> = exts.clone();
         let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
+        if app.spawn_file_dialog(crate::FileDialog::Open { exts: exts_owned, many: false }, "__form.field", "path", json!({"index": i})) {
+        } else {
         match app.hooks.pick_files.as_ref() {
             Some(pick) => {
                 if let Some(path) = pick(&exts).into_iter().next() {
@@ -900,14 +903,17 @@ pub fn show_form(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
             }
             None => app.ui.status = "no file dialog available: type the path".into(),
         }
+        }
     }
     if let Some(i) = browse
         && let Some(FieldKind::SavePath(value)) = f.fields.get_mut(i).map(|f| &mut f.kind)
     {
-        match app.hooks.save_dialog(value) {
+        if app.spawn_file_dialog(crate::FileDialog::save(value), "__form.field", "path", json!({"index": i})) {
+        } else { match app.hooks.save_dialog(value) {
             Some(Some(path)) => *value = path,
             Some(None) => {}
             None => app.ui.status = "no file dialog available: type the path".into(),
+        }
         }
     }
     let enter = !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Enter));

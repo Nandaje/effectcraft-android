@@ -400,7 +400,11 @@ fn output_to_menu(it: &RenderQueueItem) -> Vec<(String, Value)> {
 /// (folder and name, which ends in the format's extension) and offers that extension. `None`
 /// when the host has no save dialog; `Some(None)` when the dialog was cancelled.
 fn pick_output(app: &EffectcraftApp, it: &RenderQueueItem) -> Option<Option<String>> {
-    app.hooks.save_dialog(&app.session.resolve_output(it).unwrap_or_default())
+    let default = app.session.resolve_output(it).unwrap_or_default();
+    if app.spawn_file_dialog(crate::FileDialog::save(&default), "renderQueue.setOutput", "path", json!({"item": it.id})) {
+        return Some(None);
+    }
+    app.hooks.save_dialog(&default)
 }
 
 pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
@@ -415,7 +419,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     if !rendering
         && let Some(crate::panels::DragPayload::Item(id)) = egui::DragAndDrop::payload::<crate::panels::DragPayload>(ui.ctx()).as_deref()
         && app.session.project.comp(effectcraft_engine::project::ItemId(*id)).is_some()
-        && ui.input(|i| i.pointer.hover_pos()).is_some_and(|pos| rect.contains(pos))
+        && crate::panels::drag_pointer_pos(ui.ctx()).is_some_and(|pos| rect.contains(pos))
     {
         let ids: Vec<u64> = if app.session.state.project_selection.contains(&effectcraft_engine::project::ItemId(*id)) {
             app.session.state.project_selection.iter().filter(|i| app.session.project.comp(**i).is_some()).map(|i| i.0).collect()
@@ -728,7 +732,7 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
                 lp.with_clip_rect(path_rect.intersect(list)).text(pos2(path_rect.min.x, r.center().y), Align2::LEFT_CENTER, &shown, Tokens::ui(11.5), col);
                 // Clicking the file name opens the save dialog (Output Movie To); Alt-click, or a
                 // host without one, edits the name template in place.
-                let dialog = app.hooks.pick_save_file.is_some();
+                let dialog = app.hooks.pick_save_file.is_some() || app.hooks.file_dialog_async.is_some();
                 if resp.clicked() && !rendering {
                     let picked = if ui.input(|i| i.modifiers.alt) { None } else { pick_output(app, it) };
                     match picked {
@@ -808,5 +812,22 @@ mod tests {
         assert_eq!(super::utc_stamp(0), "1970-01-01 00:00:00");
         assert_eq!(super::utc_stamp(1_700_000_000), "2023-11-14 22:13:20");
         assert_eq!(super::hms(3725.4), "1:02:05");
+    }
+
+    #[test]
+    fn pick_output_uses_async_file_dialog_without_blocking() {
+        use serde_json::json;
+        let mut session = effectcraft_engine::Session::default();
+        session.execute("comp.new", json!({"name": "Main", "width": 64, "height": 64})).unwrap();
+        session.execute("renderQueue.add", json!({})).unwrap();
+        let mut app = crate::EffectcraftApp::new(session);
+        app.hooks.pick_save_file = Some(Box::new(|_, _| panic!("blocking pick_save_file must not be called when file_dialog_async is set")));
+        app.hooks.file_dialog_async = Some(Box::new(|_dialog, done| {
+            done(vec!["/tmp/Exports/Main_out.mp4".to_string()]);
+        }));
+        let item = app.session.project.render_queue[0].clone();
+        assert_eq!(super::pick_output(&app, &item), Some(None));
+        app.run_dialog_answers();
+        assert_eq!(app.session.project.render_queue[0].output.output, "/tmp/Exports/Main_out.mp4");
     }
 }

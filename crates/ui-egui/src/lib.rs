@@ -18,6 +18,7 @@ mod dock_shared;
 pub mod dock_ui;
 mod expression_diagnostics;
 pub mod frames;
+pub mod gamepad;
 pub mod gpu_failure;
 pub mod header;
 pub mod i18n;
@@ -348,6 +349,7 @@ pub struct EffectcraftApp {
     pub(crate) home_thumb_saved: Option<(String, u64)>,
     /// The window title last sent (project name, `*` while modified).
     window_title: String,
+    pub gamepad: gamepad::GamepadController,
     /// Home ▸ Templates: thumbnail textures by template id (None = not renderable).
     pub(crate) template_thumbs: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// Home ▸ Templates: the gallery, and the user template files it was listed from.
@@ -427,6 +429,7 @@ impl EffectcraftApp {
             window_title: String::new(),
             template_thumbs: Default::default(),
             template_list: None,
+            gamepad: Default::default(),
         }
         .with_ui_commands()
     }
@@ -452,6 +455,26 @@ impl EffectcraftApp {
             .map(|c| effectcraft_engine::shortcuts::UiCommand { id: c.id.into(), label: c.label.into(), shortcut: c.shortcut.map(str::to_string) })
             .collect();
         self.session.set_ui_commands(cmds);
+        self
+    }
+
+    /// Open `request` through [`Hooks::file_dialog_async`] when present and deliver its answer to
+    /// [`menus::dialog_answered`]. Returns `true` when the async dialog was spawned.
+    pub(crate) fn spawn_file_dialog(&self, request: FileDialog, command: impl Into<String>, key: &'static str, params: serde_json::Value) -> bool {
+        let Some(spawn) = self.hooks.file_dialog_async.as_ref() else { return false };
+        let tx = self.dialog_answers.0.clone();
+        let answer = DialogAnswer { command: command.into(), key, params, paths: Vec::new() };
+        spawn(
+            request,
+            Box::new(move |paths| {
+                let _ = tx.send(DialogAnswer { paths, ..answer });
+            }),
+        );
+        true
+    }
+
+    #[allow(dead_code)]
+    fn _unused_marker(&self) -> &Self {
         self
     }
 
@@ -648,13 +671,13 @@ impl EffectcraftApp {
         }
     }
 
-    /// Keep GPU-composited viewer frames on the GPU (drawn from their texture). The browser can't
-    /// read frames back (its thread can't wait for the GPU), so there the viewer shows GPU frames
-    /// directly whenever it draws them plainly (RGB, no exposure, no region of interest); the
-    /// desktop reads them back (see [`frames::RenderSource::gpu_display`]).
+    /// Keep GPU-composited viewer frames on the GPU (drawn from their texture). The browser and
+    /// Android keep viewer frames on the GPU directly whenever the viewer draws them plainly
+    /// (RGB, no exposure, no region of interest); the desktop reads them back (see
+    /// [`frames::RenderSource::gpu_display`]).
     fn gpu_display(&self) -> bool {
         let v = &self.session.state.viewer;
-        cfg!(target_arch = "wasm32")
+        cfg!(any(target_arch = "wasm32", target_os = "android"))
             && v.channel == effectcraft_engine::viewer::Channel::Rgb
             && v.exposure == 0.0
             && self.session.state.region_of_interest.is_none()
@@ -746,7 +769,9 @@ impl EffectcraftApp {
         if let Some(tell) = &self.hooks.device_lost {
             tell(saved);
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        if !cfg!(target_os = "android") {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     /// Run the commands whose non-blocking file dialogs have been answered.
@@ -1613,6 +1638,7 @@ impl EffectcraftApp {
 
     fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        gamepad::paint_cursor(self, &ctx, ctx.input(|i| i.time));
         self.apply_gpu_failure(&ctx);
         self.run_dialog_answers();
         self.auto.begin_frame();
@@ -1860,6 +1886,9 @@ impl eframe::App for EffectcraftApp {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let now = raw_input.time.unwrap_or(self.last_time);
+        let dt = ((now - self.last_time) as f32).clamp(1.0 / 240.0, 0.1);
+        gamepad::step(self, ctx, now, dt);
         let injected = !self.synthetic.is_empty();
         self.feed_synthetic(raw_input);
         if pointer_wrap::prepare_input(ctx, raw_input, injected) {
@@ -1903,7 +1932,7 @@ impl eframe::App for EffectcraftApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        if self.gpu_failure_applied == Some(true) {
+        if self.gpu_failure_applied == Some(true) && !cfg!(target_os = "android") {
             self.close_after_device_loss(ui.ctx());
             return;
         }
@@ -1914,6 +1943,7 @@ impl eframe::App for EffectcraftApp {
         }
         self.frame(ui);
         let ctx = ui.ctx().clone();
+        gamepad::paint_cursor(self, &ctx, ctx.input(|i| i.time));
         #[cfg(not(target_arch = "wasm32"))]
         pointer_wrap::finish_native(&ctx, frame);
         // wasm32: no frame threads; render queued frames now, between UI frames.

@@ -724,13 +724,17 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
                 }
             }
             Act::PickFolder(k) => {
-                if let Some(f) = app.hooks.pick_folder.as_ref().and_then(|f| f()) {
+                if !app.spawn_file_dialog(crate::FileDialog::Folder, "prefs.set", "value", json!({"key": &k}))
+                    && let Some(f) = app.hooks.pick_folder.as_ref().and_then(|f| f())
+                {
                     let _ = app.session.prefs.set(&k, json!(f));
                     app.session.prefs_changed();
                 }
             }
             Act::PickProject(k) => {
-                if let Some(f) = app.hooks.pick_open_project.as_ref().and_then(|f| f()) {
+                if !app.spawn_file_dialog(crate::FileDialog::OpenProject, "prefs.set", "value", json!({"key": &k}))
+                    && let Some(f) = app.hooks.pick_open_project.as_ref().and_then(|f| f())
+                {
                     let _ = app.session.prefs.set(&k, json!(f));
                     app.session.prefs_changed();
                 }
@@ -739,7 +743,13 @@ pub fn show(app: &mut EffectcraftApp, ctx: &egui::Context, t: &Tokens) {
                 // The registry's file types for the task (`.pt`, `.task`).
                 let mut exts: Vec<&str> = effectcraft_engine::segment::models(task).filter_map(|m| m.file_name.rsplit_once('.').map(|x| x.1)).collect();
                 exts.dedup();
-                let picked = app.hooks.pick_files.as_ref().map(|f| f(&exts)).unwrap_or_default();
+                let cmd = if task == Task::Face { "face.model.install" } else { "roto.model.install" };
+                let exts_owned: Vec<String> = exts.iter().map(|s| (*s).to_string()).collect();
+                let picked = if app.spawn_file_dialog(crate::FileDialog::Open { exts: exts_owned, many: false }, cmd, "path", json!({})) {
+                    Vec::new()
+                } else {
+                    app.hooks.pick_files.as_ref().map(|f| f(&exts)).unwrap_or_default()
+                };
                 let cmd = if task == Task::Face { "face.model.install" } else { "roto.model.install" };
                 if let Some(path) = picked.into_iter().next()
                     && let Err(e) = crate::menus::invoke(app, ctx, cmd, json!({"path": path}))

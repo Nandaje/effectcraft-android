@@ -2,6 +2,7 @@
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/*"]
+exclude = ["packaging/android/apk"]
 
 [workspace.package]
 version = "0.16.0"
