@@ -1,6 +1,6 @@
 //! EffectCraft desktop and Android application library.
 //!
-//! Usage (desktop): `effectcraft [--control <port>] [--demo|--empty|--home] [--] [project.ecproj | media files…]`
+//! Usage (desktop): `effectcraft [--control <port>] [--demo|--empty|--home] [--] [project.ecproj | media filesâ€¦]`
 //!
 //! On Android (`target_os = "android"`), [`run_android`] is invoked from the APK's
 //! `android_main` entry point with the `AndroidApp` handle.
@@ -58,7 +58,7 @@ fn is_project_file(path: &str) -> bool {
 #[cfg(target_os = "linux")]
 fn wayland_drop_notice(wayland_display: Option<&std::ffi::OsStr>, backend: Option<&std::ffi::OsStr>) -> Option<&'static str> {
     (wayland_display.is_some_and(|v| !v.is_empty()) && backend != Some(std::ffi::OsStr::new("x11")))
-        .then_some("Native Wayland file drops are unavailable. Use File ▸ Import ▸ File… or run via XWayland (see README, Linux).")
+        .then_some("Native Wayland file drops are unavailable. Use File â–¸ Import â–¸ Fileâ€¦ or run via XWayland (see README, Linux).")
 }
 
 /// The command line.
@@ -124,7 +124,7 @@ fn control_port(name: &str, value: Option<&str>) -> Result<u16, String> {
 
 /// The commands' file dialogs open without blocking the frame where the host's backend would:
 /// on macOS as sheets instead of nested modal loops (#511), on Linux through the desktop
-/// portal from a worker thread — a blocking portal dialog leaves the main thread waiting on its
+/// portal from a worker thread â€” a blocking portal dialog leaves the main thread waiting on its
 /// answer without pumping events, so the window stops answering the compositor and the desktop
 /// offers to force-quit it while the Open dialog is up (#1275). Windows' blocking dialog pumps
 /// its own messages, so it keeps [`effectcraft_ui_egui::Hooks::pick_files`] and friends.
@@ -221,7 +221,7 @@ pub fn run_android(android_app: AndroidApp) -> eframe::Result {
 /// Entry point for the desktop executable.
 pub fn run_desktop() -> eframe::Result {
     // First, so the panic hook and every start-up warning are recorded. Records go to stderr
-    // and the session log; Help ▸ Enable Logging writes through this logger too, and warnings
+    // and the session log; Help â–¸ Enable Logging writes through this logger too, and warnings
     // feed the compatibility report.
     effectcraft_engine::logging::install();
     effectcraft_engine::logging::install_panic_hook();
@@ -265,7 +265,7 @@ fn run_with_options(
     // Wayland shows the window's icon from its desktop entry: an AppImage brings its own.
     #[cfg(target_os = "linux")]
     appimage::integrate_from_env(ICON_PNG);
-    // Settings ▸ Startup & Repair ▸ Window Graphics, switched to OpenGL when the last launch
+    // Settings â–¸ Startup & Repair â–¸ Window Graphics, switched to OpenGL when the last launch
     // stopped as its window opened (a crashing graphics driver, #243).
     let mut launch = launch_guard::Launch::begin(effectcraft_host::config_dir().as_deref(), std::env::var_os("WGPU_BACKEND").is_some());
     let on_gl = launch.backends == Some(eframe::wgpu::Backends::GL);
@@ -584,7 +584,7 @@ mod tests {
     fn wayland_drop_notice_recommends_import_or_xwayland() {
         use std::ffi::OsStr;
         let warning = super::wayland_drop_notice(Some(OsStr::new("wayland-0")), None).unwrap();
-        assert!(warning.contains("File ▸ Import") && warning.contains("XWayland"));
+        assert!(warning.contains("File â–¸ Import") && warning.contains("XWayland"));
         assert!(super::wayland_drop_notice(None, None).is_none());
         assert!(super::wayland_drop_notice(Some(OsStr::new("")), None).is_none());
         assert!(super::wayland_drop_notice(Some(OsStr::new("wayland-0")), Some(OsStr::new("x11"))).is_none());

@@ -96,5 +96,8 @@ sync_github_name = true
 display_name = "Netter"
 sync_github_name = false
 
+[people.ki2pixel]
+display_name = "ki2pixel"
+
 [people.Nandaje]
 sync_github_name = true
