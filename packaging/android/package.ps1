@@ -23,7 +23,7 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 function Invoke-Native([string] $What, [scriptblock] $Block) {
   Write-Output "==> $What"
-  & $Block
+  $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'; try { & $Block } finally { $ErrorActionPreference = $prevEap }
   if ($LASTEXITCODE -ne 0) { throw "$What failed with exit code $LASTEXITCODE" }
 }
 

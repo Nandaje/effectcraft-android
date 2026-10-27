@@ -749,13 +749,13 @@ impl NativeIme {
 }
 
 /// The OS window craft-ui opens for the floating window `id`.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn window_viewport(id: u64) -> Option<egui::ViewportId> {
     Some(DockArea::<PanelKind>::window_viewport(area_id(), id))
 }
 
-/// The web keeps floating windows in the page.
-#[cfg(target_arch = "wasm32")]
+/// The web and Android keep floating windows in the page/surface.
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
 fn window_viewport(_id: u64) -> Option<egui::ViewportId> {
     None
 }

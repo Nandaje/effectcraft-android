@@ -226,7 +226,7 @@ pub fn step(app: &mut EffectcraftApp, ctx: &egui::Context, now: f64, dt: f32) {
             unit: MouseWheelUnit::Point,
             delta,
             modifiers: Modifiers::NONE,
-            phase: egui::TouchPhase::Move,
+            phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Wheel,
         });
     }
 
@@ -339,7 +339,7 @@ pub fn paint_cursor(app: &EffectcraftApp, ctx: &egui::Context, now: f64) {
         return;
     }
     let Some(pos) = app.gamepad.cursor else { return };
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("gamepad-cursor")));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("gamepad-cursor")));
     let down = app.gamepad.primary_down;
     let radius = if down { 7.5 } else { 9.0 };
     let ring_color = if down { app.tokens.accent } else { Color32::WHITE };
