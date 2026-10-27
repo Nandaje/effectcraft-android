@@ -22,7 +22,7 @@ effectcraft-render = { workspace = true }
 effectcraft-engine = { workspace = true }
 effectcraft-gpu = { workspace = true }
 egui = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "clipboard"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
@@ -35,12 +35,20 @@ image = { workspace = true }
 [target.'cfg(not(target_os = "android"))'.dependencies]
 eframe = { workspace = true, features = ["accesskit"] }
 
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
+# Floating panels open in OS windows of their own on desktop; the web and Android keep them in the page.
+craft-ui = { workspace = true, features = ["native-windows"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+craft-update = { workspace = true }
 sys-locale = { workspace = true }
 
 [dev-dependencies]
+# Fonts for kittest: the workspace `egui` features are what test roots resolve, but stating them
+# here documents the requirement (kittest's own dev-dependencies do not propagate to consumers).
+egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 egui_kittest = { workspace = true, features = ["eframe", "wgpu"] }
-pollster = "0.4"
+pollster = "1"
 effectcraft-host = { workspace = true }
 exr = { workspace = true }
 

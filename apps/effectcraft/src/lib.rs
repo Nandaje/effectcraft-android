@@ -1,6 +1,6 @@
 //! EffectCraft desktop and Android application library.
 //!
-//! Usage (desktop): `effectcraft [--control <port>] [--demo|--empty|--home] [--] [project.ecproj | media filesâ€¦]`
+//! Usage (desktop): `effectcraft [--control <port>] [--demo|--empty|--home] [--] [project.ecproj | media files…]`
 //!
 //! On Android (`target_os = "android"`), [`run_android`] is invoked from the APK's
 //! `android_main` entry point with the `AndroidApp` handle.
@@ -50,7 +50,7 @@ fn app_icon() -> egui::IconData {
 fn is_project_file(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()
-        .and_then(|ext| ext.to_str())
+        .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|ext| ext.eq_ignore_ascii_case("ecproj") || ext.eq_ignore_ascii_case("ecprojx"))
 }
 
@@ -58,7 +58,7 @@ fn is_project_file(path: &str) -> bool {
 #[cfg(target_os = "linux")]
 fn wayland_drop_notice(wayland_display: Option<&std::ffi::OsStr>, backend: Option<&std::ffi::OsStr>) -> Option<&'static str> {
     (wayland_display.is_some_and(|v| !v.is_empty()) && backend != Some(std::ffi::OsStr::new("x11")))
-        .then_some("Native Wayland file drops are unavailable. Use File â–¸ Import â–¸ Fileâ€¦ or run via XWayland (see README, Linux).")
+        .then_some("Native Wayland file drops are unavailable. Use File ▸ Import ▸ File… or run via XWayland (see README, Linux).")
 }
 
 /// The command line.
@@ -124,23 +124,35 @@ fn control_port(name: &str, value: Option<&str>) -> Result<u16, String> {
 
 /// The commands' file dialogs open without blocking the frame where the host's backend would:
 /// on macOS as sheets instead of nested modal loops (#511), on Linux through the desktop
-/// portal from a worker thread â€” a blocking portal dialog leaves the main thread waiting on its
+/// portal from a worker thread — a blocking portal dialog leaves the main thread waiting on its
 /// answer without pumping events, so the window stops answering the compositor and the desktop
 /// offers to force-quit it while the Open dialog is up (#1275). Windows' blocking dialog pumps
 /// its own messages, so it keeps [`effectcraft_ui_egui::Hooks::pick_files`] and friends.
-fn install_file_dialogs(app: &mut EffectcraftApp, ctx: &egui::Context) {
+/// The dialogs asked for in a frame show at its end ([`sheet_dialogs::show_asked`]), where the
+/// main window's handle is at hand.
+#[cfg(not(target_os = "android"))]
+fn install_file_dialogs(app: &mut EffectcraftApp, _ctx: &egui::Context) -> Option<std::sync::mpsc::Receiver<sheet_dialogs::Asked>> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        let ctx = ctx.clone();
-        app.hooks.file_dialog_async = Some(Box::new(move |dialog, done| sheet_dialogs::show(dialog, done, ctx.clone())));
+        let (tx, rx) = std::sync::mpsc::channel::<sheet_dialogs::Asked>();
+        app.hooks.file_dialog_async = Some(Box::new(move |dialog, done| {
+            if tx.send((dialog, done)).is_err() {
+                log::error!("file dialog: the window is gone");
+            }
+        }));
+        Some(rx)
     }
-    #[cfg(target_os = "android")]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let ctx = ctx.clone();
-        app.hooks.file_dialog_async = Some(Box::new(move |dialog, done| android::show(dialog, done, ctx.clone())));
+        let _ = app;
+        None
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-    let _ = (app, ctx);
+}
+
+#[cfg(target_os = "android")]
+fn install_file_dialogs(app: &mut EffectcraftApp, ctx: &egui::Context) {
+    let ctx = ctx.clone();
+    app.hooks.file_dialog_async = Some(Box::new(move |dialog, done| android::show(dialog, done, ctx.clone())));
 }
 
 /// Install platform file pickers onto `app`.
@@ -220,8 +232,13 @@ pub fn run_android(android_app: AndroidApp) -> eframe::Result {
 
 /// Entry point for the desktop executable.
 pub fn run_desktop() -> eframe::Result {
+    // Windows: the update helper is a copy of this program started with `--finish-update`.
+    #[cfg(windows)]
+    if let Some(result) = craft_update::self_update::finish(&craft_update::suite::EFFECTCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        std::process::exit(i32::from(result.is_err()));
+    }
     // First, so the panic hook and every start-up warning are recorded. Records go to stderr
-    // and the session log; Help â–¸ Enable Logging writes through this logger too, and warnings
+    // and the session log; Help ▸ Enable Logging writes through this logger too, and warnings
     // feed the compatibility report.
     effectcraft_engine::logging::install();
     effectcraft_engine::logging::install_panic_hook();
@@ -265,7 +282,7 @@ fn run_with_options(
     // Wayland shows the window's icon from its desktop entry: an AppImage brings its own.
     #[cfg(target_os = "linux")]
     appimage::integrate_from_env(ICON_PNG);
-    // Settings â–¸ Startup & Repair â–¸ Window Graphics, switched to OpenGL when the last launch
+    // Settings ▸ Startup & Repair ▸ Window Graphics, switched to OpenGL when the last launch
     // stopped as its window opened (a crashing graphics driver, #243).
     let mut launch = launch_guard::Launch::begin(effectcraft_host::config_dir().as_deref(), std::env::var_os("WGPU_BACKEND").is_some());
     let on_gl = launch.backends == Some(eframe::wgpu::Backends::GL);
@@ -303,6 +320,7 @@ fn run_with_options(
         "EffectCraft",
         options,
         Box::new(move |cc| {
+            EffectcraftApp::install_ime_reset_hooks(&cc.egui_ctx);
             match &cc.wgpu_render_state {
                 Some(rs) => log::info!("graphics: {:?}", rs.adapter.get_info()),
                 None => log::info!("graphics: no wgpu device"),
@@ -367,6 +385,7 @@ fn run_with_options(
             // reported in a toast and forgotten).
             let _ = session.execute("window.restoreScriptPanels", json!({}));
             let mut app = EffectcraftApp::new(session);
+            app.set_startup_update_check(!cfg!(target_os = "android"));
             app.set_gpu_failure_bridge(gpu_failures);
             app.ui.start_screen = show_home;
             if let Some(n) = notice {
@@ -387,6 +406,9 @@ fn run_with_options(
             app.hooks.audio_devices = Some(Box::new(audio_out::devices));
             // The commands' file dialogs don't block the frame where the platform's backend
             // would (#511, #1275); see [`install_file_dialogs`].
+            #[cfg(not(target_os = "android"))]
+            let file_dialogs = install_file_dialogs(&mut app, &cc.egui_ctx);
+            #[cfg(target_os = "android")]
             install_file_dialogs(&mut app, &cc.egui_ctx);
             #[cfg(target_os = "macos")]
             {
@@ -405,6 +427,8 @@ fn run_with_options(
                 #[cfg(target_os = "macos")]
                 apple_events: apple_events.connect(&cc.egui_ctx),
                 app,
+                #[cfg(not(target_os = "android"))]
+                file_dialogs,
                 window: window::Tracker::new(opened, saved_window, control_port.is_none()),
                 launch,
                 drawn: false,
@@ -443,13 +467,20 @@ fn wgpu_options(backends: Option<eframe::wgpu::Backends>) -> eframe::WgpuConfigu
         // Iris Pro: the device is lost and the window never opens.
         // `WGPU_VALIDATION_INDIRECT_CALL=1` turns the check back on.
         setup.instance_descriptor.flags = setup.instance_descriptor.flags.difference(eframe::wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL).with_env();
-        setup.device_descriptor = std::sync::Arc::new(|adapter| eframe::wgpu::DeviceDescriptor {
-            label: Some("EffectCraft device"),
-            required_limits: device_limits(adapter.limits()),
-            ..Default::default()
-        });
+        setup.device_descriptor = std::sync::Arc::new(|adapter| device_descriptor(adapter.limits()));
     }
     config
+}
+
+/// The window device's descriptor: the adapter's limits ([`device_limits`]) and `MemoryUsage`,
+/// so memory the compositor frees on the shared device goes back to the driver.
+fn device_descriptor(adapter: eframe::wgpu::Limits) -> eframe::wgpu::DeviceDescriptor<'static> {
+    eframe::wgpu::DeviceDescriptor {
+        label: Some("EffectCraft device"),
+        required_limits: device_limits(adapter),
+        memory_hints: eframe::wgpu::MemoryHints::MemoryUsage,
+        ..Default::default()
+    }
 }
 
 /// The limits to request from an adapter that offers `adapter`: all of them, with textures
@@ -484,6 +515,9 @@ fn startup_failed(e: &eframe::Error, gl_next: bool) {
 /// The desktop app: the egui app plus, on macOS, the system menu bar.
 struct Desktop {
     app: EffectcraftApp,
+    /// The commands' file dialogs, shown at the end of the frame that asked for them.
+    #[cfg(not(target_os = "android"))]
+    file_dialogs: Option<std::sync::mpsc::Receiver<sheet_dialogs::Asked>>,
     #[cfg(target_os = "macos")]
     menu: native_menu::NativeBar,
     /// Documents opened from Finder, the Dock or `open` (macOS).
@@ -497,16 +531,26 @@ struct Desktop {
 }
 
 impl eframe::App for Desktop {
+    /// The desktop host's logic tick: update the macOS menu bar, run the shared app tick and close the IME pass.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
         self.menu.update(&mut self.app, ctx);
         #[cfg(target_os = "android")]
         android::poll_incoming_files(&mut self.app, ctx);
-        self.app.logic(ctx, frame);
+        self.app.tick(ctx, frame);
+        self.app.finish_ime_logic(ctx);
+        #[cfg(not(target_os = "android"))]
+        if let Some(asked) = &self.file_dialogs {
+            sheet_dialogs::show_asked(asked, frame, ctx);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.app.ui(ui, frame);
+        #[cfg(not(target_os = "android"))]
+        if let Some(asked) = &self.file_dialogs {
+            sheet_dialogs::show_asked(asked, frame, ui.ctx());
+        }
         self.window.frame(ui.ctx(), self.app.session.config.as_deref());
         if !self.drawn {
             self.drawn = true;
@@ -584,7 +628,7 @@ mod tests {
     fn wayland_drop_notice_recommends_import_or_xwayland() {
         use std::ffi::OsStr;
         let warning = super::wayland_drop_notice(Some(OsStr::new("wayland-0")), None).unwrap();
-        assert!(warning.contains("File â–¸ Import") && warning.contains("XWayland"));
+        assert!(warning.contains("File ▸ Import") && warning.contains("XWayland"));
         assert!(super::wayland_drop_notice(None, None).is_none());
         assert!(super::wayland_drop_notice(Some(OsStr::new("")), None).is_none());
         assert!(super::wayland_drop_notice(Some(OsStr::new("wayland-0")), Some(OsStr::new("x11"))).is_none());
@@ -614,6 +658,17 @@ mod tests {
         }
         let big = Limits { max_texture_dimension_2d: 32768, ..Limits::default() };
         assert_eq!(super::device_limits(big).max_texture_dimension_2d, 16384);
+    }
+
+    /// The window device asks for `MemoryUsage`: the adapter's limits, unchanged.
+    #[test]
+    fn the_window_device_favours_memory_usage() {
+        use eframe::wgpu::Limits;
+        let big = Limits { max_texture_dimension_2d: 32768, ..Limits::default() };
+        let d = super::device_descriptor(big);
+        assert!(matches!(d.memory_hints, eframe::wgpu::MemoryHints::MemoryUsage));
+        assert_eq!(d.required_limits.max_texture_dimension_2d, 16384);
+        assert_eq!(d.label, Some("EffectCraft device"));
     }
 
     /// A positional .ecprojx is a project file, not an unsupported media import (#528).
@@ -698,10 +753,15 @@ mod tests {
     #[test]
     fn commands_file_dialogs_do_not_block_the_frame() {
         let mut app = effectcraft_ui_egui::EffectcraftApp::new(effectcraft_engine::Session::default());
+        #[cfg(not(target_os = "android"))]
+        let asked = super::install_file_dialogs(&mut app, &egui::Context::default());
+        #[cfg(target_os = "android")]
         super::install_file_dialogs(&mut app, &egui::Context::default());
-        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        assert!(app.hooks.file_dialog_async.is_some() && asked.is_some(), "the commands' file dialogs must not block the frame");
+        #[cfg(target_os = "android")]
         assert!(app.hooks.file_dialog_async.is_some(), "the commands' file dialogs must not block the frame");
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        assert!(app.hooks.file_dialog_async.is_none(), "the blocking dialog pumps its own messages here");
+        assert!(app.hooks.file_dialog_async.is_none() && asked.is_none(), "the blocking dialog pumps its own messages here");
     }
 }
