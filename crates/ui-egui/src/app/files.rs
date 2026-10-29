@@ -1,4 +1,4 @@
-use super::*;
+use super::{Dialog, EffectcraftApp};
 
 impl EffectcraftApp {
     /// Open `request` through [`Hooks::file_dialog_async`] when present and deliver its answer to

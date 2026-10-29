@@ -543,6 +543,7 @@ impl eframe::App for Desktop {
         if let Some(asked) = &self.file_dialogs {
             sheet_dialogs::show_asked(asked, frame, ctx);
         }
+        effectcraft_ui_egui::panels::unsaved::quit_on_close(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -564,6 +565,7 @@ impl eframe::App for Desktop {
     }
 
     fn on_exit(&mut self) {
+        log::info!("the window is closing");
         self.launch.exited();
         self.window.save(self.app.session.config.as_deref());
         self.app.on_exit();
