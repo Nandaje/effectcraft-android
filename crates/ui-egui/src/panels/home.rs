@@ -228,11 +228,15 @@ pub fn show(app: &mut EffectcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let p = ui.painter().with_clip_rect(rect);
     p.rect_filled(rect, 0.0, t.app_bg);
     let mut actions: Vec<(&str, serde_json::Value)> = vec![];
-    let rail = Rect::from_min_size(rect.min, vec2(RAIL_W.min(rect.width() * 0.4), rect.height()));
+    let compact = rect.width() < 640.0;
+    let rail_w = if compact { (RAIL_W * 0.76).min(rect.width() * 0.34).max(136.0) } else { RAIL_W.min(rect.width() * 0.4) };
+    let rail = Rect::from_min_size(rect.min, vec2(rail_w, rect.height()));
     p.rect_filled(rail, 0.0, t.panel_bg);
     p.line_segment([rail.right_top(), rail.right_bottom()], Stroke::new(1.0, t.separator));
     rail_ui(app, ui, &p, rail, &mut actions);
-    let main = Rect::from_min_max(pos2(rail.max.x + 40.0, rect.min.y + 32.0), pos2(rect.max.x - 40.0, rect.max.y - 16.0));
+    let h_pad = if compact { 16.0 } else { 40.0 };
+    let v_pad = if compact { 20.0 } else { 32.0 };
+    let main = Rect::from_min_max(pos2(rail.max.x + h_pad, rect.min.y + v_pad), pos2((rect.max.x - h_pad).max(rail.max.x + h_pad + 120.0), rect.max.y - 16.0));
     if app.ui.home_learn {
         super::learn::home_tab(app, ui, main);
     } else if app.ui.home_templates {
@@ -360,9 +364,13 @@ fn home_page(
         ("New from Template", "templates", Icon::Grid),
     ];
     let gap = 12.0;
-    let tw = ((w - gap * 3.0) / 4.0).clamp(120.0, 220.0);
+    let cols = ((w + gap) / (132.0 + gap)).floor().clamp(1.0, 4.0) as usize;
+    let tw = ((w - gap * (cols.saturating_sub(1) as f32)) / cols as f32).clamp(110.0, 220.0);
+    let rows = tiles.len().div_ceil(cols);
     for (k, (label, id, icon)) in tiles.into_iter().enumerate() {
-        let r = Rect::from_min_size(pos2(x0 + k as f32 * (tw + gap), y), vec2(tw, 64.0));
+        let col_i = k % cols;
+        let row_i = k / cols;
+        let r = Rect::from_min_size(pos2(x0 + col_i as f32 * (tw + gap), y + row_i as f32 * (64.0 + gap)), vec2(tw, 64.0));
         let resp = ui.interact(r, egui::Id::unique(("home-tile", id)), Sense::click());
         p.rect_filled(r, 8.0, if resp.hovered() { t.hover } else { t.panel_bg });
         p.rect_stroke(r, 8.0, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.separator }), StrokeKind::Inside);
@@ -380,14 +388,15 @@ fn home_page(
             }
         }
     }
-    y += 64.0 + 36.0;
+    y += rows as f32 * 64.0 + rows.saturating_sub(1) as f32 * gap + 36.0;
 
     // Recent: heading, filter, clear.
     p.text(pos2(x0, y + 12.0), Align2::LEFT_CENTER, tr("Recent"), Tokens::semibold(17.0), t.tab_text_active);
     let entries = recent_entries(&app.session.prefs);
     let fid = egui::Id::unique("home-filter");
     let mut filter: String = ctx.data(|d| d.get_temp(fid)).unwrap_or_default();
-    let fr = Rect::from_min_size(pos2(x0 + w - 240.0, y), vec2(240.0, 26.0));
+    let fw = 240.0_f32.min((w - 92.0).max(110.0));
+    let fr = Rect::from_min_size(pos2(x0 + w - fw, y), vec2(fw, 26.0));
     widgets::search_field(ui, fr, &mut filter, tr("Filter recent files"), &t);
     app.auto.add("home.filter", fr, "Filter recent files");
     ctx.data_mut(|d| d.insert_temp(fid, filter.clone()));

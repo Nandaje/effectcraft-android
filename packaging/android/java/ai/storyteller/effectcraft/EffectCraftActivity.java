@@ -74,6 +74,8 @@ public final class EffectCraftActivity extends NativeActivity {
     private volatile boolean running = true;
     private volatile boolean activityResumed = false;
     private volatile boolean nativeWindowReady = false;
+    private volatile int lastSurfaceWidth = 0;
+    private volatile int lastSurfaceHeight = 0;
 
     private final Map<String, UriAndMtime> saveSyncTargets = new ConcurrentHashMap<>();
     private final Map<String, ExportMirrorState> mirroredExports = new ConcurrentHashMap<>();
@@ -144,12 +146,43 @@ public final class EffectCraftActivity extends NativeActivity {
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
         super.surfaceCreated(holder);
+        if (holder != null && holder.getSurfaceFrame() != null) {
+            lastSurfaceWidth = holder.getSurfaceFrame().width();
+            lastSurfaceHeight = holder.getSurfaceFrame().height();
+        }
         nativeWindowReady = true;
+    }
+
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        int prevW = lastSurfaceWidth;
+        int prevH = lastSurfaceHeight;
+        if (width > 0 && height > 0) {
+            lastSurfaceWidth = width;
+            lastSurfaceHeight = height;
+        }
+        // AOSP NativeActivity.onSurfaceChangedNative is a no-op when the Surface pointer is
+        // unchanged, and winit's Android backend does not emit WindowEvent::Resized on
+        // MainEvent::ConfigChanged. Cycling surfaceDestroyed/surfaceCreated when the surface
+        // dimensions change (e.g. portrait <-> landscape rotation or split-screen resize)
+        // triggers TerminateWindow -> InitWindow so eframe/egui-wgpu reconfigures the Vulkan
+        // swapchain at the new width x height without losing app state.
+        if (nativeWindowReady && prevW > 0 && prevH > 0 && width > 0 && height > 0
+                && (width != prevW || height != prevH)) {
+            nativeWindowReady = false;
+            super.surfaceDestroyed(holder);
+            super.surfaceCreated(holder);
+            nativeWindowReady = true;
+            return;
+        }
+        super.surfaceChanged(holder, format, width, height);
     }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         nativeWindowReady = false;
+        lastSurfaceWidth = 0;
+        lastSurfaceHeight = 0;
         super.surfaceDestroyed(holder);
     }
 

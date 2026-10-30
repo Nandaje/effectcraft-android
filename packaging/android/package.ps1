@@ -163,20 +163,193 @@ $Stage = Join-Path $TargetDir 'android-package'
 Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Stage | Out-Null
 
-# Stage launcher icons from assets/app-icon/hicolor into Android mipmap directories inside target/.
+# Stage Android Adaptive Icons (API 26+) and density-specific launcher icons into target/android-package/res.
 $ResDir = Join-Path $Stage 'res'
-$IconMap = @{
-  'mipmap-mdpi'    = '48x48'
-  'mipmap-xhdpi'   = '128x128'
-  'mipmap-xxhdpi'  = '256x256'
-  'mipmap-xxxhdpi' = '512x512'
+$SrcIcon1024 = Join-Path $Root 'assets\app-icon\effectcraft-1024.png'
+if (-not (Test-Path $SrcIcon1024)) { throw "missing source icon $SrcIcon1024" }
+
+Add-Type -AssemblyName System.Drawing
+if (-not ('EffectCraftIconGen' -as [type])) {
+  Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
+using System;
+using System.IO;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+
+public static class EffectCraftIconGen {
+    private static byte ClampByte(float v) {
+        if (v <= 0f) return 0;
+        if (v >= 255f) return 255;
+        return (byte)(v + 0.5f);
+    }
+
+    public static void Generate(string srcPath, string resDir) {
+        using (Bitmap src = new Bitmap(srcPath)) {
+            int w = src.Width;
+            int h = src.Height;
+            using (Bitmap fg = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            using (Bitmap mono = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
+                for (int y = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++) {
+                        Color c = src.GetPixel(x, y);
+                        if (c.A == 0) {
+                            fg.SetPixel(x, y, Color.FromArgb(0, 0, 0, 0));
+                            mono.SetPixel(x, y, Color.FromArgb(0, 0, 0, 0));
+                            continue;
+                        }
+                        // Key out the #E0368F (224, 54, 143) pink background so the unicorn sits on
+                        // a transparent foreground layer over @color/ic_launcher_background (#E0368F).
+                        float m = Math.Max(0f, ((c.R - c.G) - 8f) / 162f);
+                        if (m > 1f) m = 1f;
+                        float fgAlpha = (c.A / 255f) * (1f - m);
+                        if (fgAlpha <= 0.01f) {
+                            fg.SetPixel(x, y, Color.FromArgb(0, 0, 0, 0));
+                            mono.SetPixel(x, y, Color.FromArgb(0, 0, 0, 0));
+                            continue;
+                        }
+                        float inv = 1f - m;
+                        byte outR = ClampByte((c.R - 224f * m) / inv);
+                        byte outG = ClampByte((c.G - 54f * m) / inv);
+                        byte outB = ClampByte((c.B - 143f * m) / inv);
+                        byte outA = ClampByte(fgAlpha * 255f);
+                        fg.SetPixel(x, y, Color.FromArgb(outA, outR, outG, outB));
+
+                        float paper = Math.Max(0f, Math.Min(1f, (outG - 15f) / 215f));
+                        byte monoA = ClampByte(fgAlpha * (0.15f + 0.85f * paper) * 255f);
+                        mono.SetPixel(x, y, Color.FromArgb(monoA, 255, 255, 255));
+                    }
+                }
+
+                string[] densities = new string[] { "mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi", "mipmap-xxhdpi", "mipmap-xxxhdpi" };
+                int[] adaptiveSizes = new int[] { 108, 162, 216, 324, 432 };
+                int[] legacySizes   = new int[] { 48,  72,  96,  144, 192 };
+                Color bgPink = Color.FromArgb(255, 224, 54, 143);
+
+                for (int i = 0; i < densities.Length; i++) {
+                    string dir = Path.Combine(resDir, densities[i]);
+                    Directory.CreateDirectory(dir);
+                    int aSize = adaptiveSizes[i];
+                    int lSize = legacySizes[i];
+
+                    // 108dp adaptive foreground & monochrome: place unicorn within the 66dp safe-zone circle
+                    // centered at (54dp, 54dp).
+                    float sDp = 54.0f;
+                    float oxDp = 54.0f - 0.525f * sDp;
+                    float oyDp = 54.0f - 0.485f * sDp;
+                    float drawS = aSize * (sDp / 108.0f);
+                    float drawX = aSize * (oxDp / 108.0f);
+                    float drawY = aSize * (oyDp / 108.0f);
+
+                    using (Bitmap outFg = new Bitmap(aSize, aSize, PixelFormat.Format32bppArgb))
+                    using (Graphics g = Graphics.FromImage(outFg)) {
+                        ConfigureGraphics(g);
+                        g.Clear(Color.FromArgb(0, 0, 0, 0));
+                        g.DrawImage(fg, new RectangleF(drawX, drawY, drawS, drawS));
+                        outFg.Save(Path.Combine(dir, "ic_launcher_foreground.png"), ImageFormat.Png);
+                    }
+
+                    using (Bitmap outMono = new Bitmap(aSize, aSize, PixelFormat.Format32bppArgb))
+                    using (Graphics g = Graphics.FromImage(outMono)) {
+                        ConfigureGraphics(g);
+                        g.Clear(Color.FromArgb(0, 0, 0, 0));
+                        g.DrawImage(mono, new RectangleF(drawX, drawY, drawS, drawS));
+                        outMono.Save(Path.Combine(dir, "ic_launcher_monochrome.png"), ImageFormat.Png);
+                    }
+
+                    // Legacy round icon (API 25 / roundIcon fallback): circle within lSize x lSize
+                    using (Bitmap outRound = new Bitmap(lSize, lSize, PixelFormat.Format32bppArgb))
+                    using (Graphics g = Graphics.FromImage(outRound)) {
+                        ConfigureGraphics(g);
+                        g.Clear(Color.FromArgb(0, 0, 0, 0));
+                        float pad = lSize * (2.0f / 48.0f);
+                        float d = lSize - pad * 2.0f;
+                        using (GraphicsPath clipPath = new GraphicsPath()) {
+                            clipPath.AddEllipse(pad, pad, d, d);
+                            using (SolidBrush brush = new SolidBrush(bgPink)) {
+                                g.FillPath(brush, clipPath);
+                            }
+                            g.SetClip(clipPath);
+                            float rS = d * (54.0f / 68.0f);
+                            float rX = (lSize * 0.5f) - 0.525f * rS;
+                            float rY = (lSize * 0.5f) - 0.485f * rS;
+                            g.DrawImage(fg, new RectangleF(rX, rY, rS, rS));
+                            g.ResetClip();
+                        }
+                        outRound.Save(Path.Combine(dir, "ic_launcher_round.png"), ImageFormat.Png);
+                    }
+
+                    // Legacy square icon: Material keyline rounded square within lSize x lSize
+                    using (Bitmap outSq = new Bitmap(lSize, lSize, PixelFormat.Format32bppArgb))
+                    using (Graphics g = Graphics.FromImage(outSq)) {
+                        ConfigureGraphics(g);
+                        g.Clear(Color.FromArgb(0, 0, 0, 0));
+                        float pad = lSize * (3.0f / 48.0f);
+                        float d = lSize - pad * 2.0f;
+                        float r = d * 0.22f;
+                        using (GraphicsPath sqPath = RoundedRect(pad, pad, d, d, r)) {
+                            using (SolidBrush brush = new SolidBrush(bgPink)) {
+                                g.FillPath(brush, sqPath);
+                            }
+                            g.SetClip(sqPath);
+                            float sqS = d * 0.88f;
+                            float sqX = (lSize * 0.5f) - 0.515f * sqS;
+                            float sqY = (lSize * 0.5f) - 0.495f * sqS;
+                            g.DrawImage(fg, new RectangleF(sqX, sqY, sqS, sqS));
+                            g.ResetClip();
+                        }
+                        outSq.Save(Path.Combine(dir, "ic_launcher.png"), ImageFormat.Png);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ConfigureGraphics(Graphics g) {
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.SmoothingMode = SmoothingMode.HighQuality;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        g.CompositingQuality = CompositingQuality.HighQuality;
+    }
+
+    private static GraphicsPath RoundedRect(float x, float y, float w, float h, float r) {
+        float d = r * 2.0f;
+        GraphicsPath path = new GraphicsPath();
+        path.AddArc(x, y, d, d, 180, 90);
+        path.AddArc(x + w - d, y, d, d, 270, 90);
+        path.AddArc(x + w - d, y + h - d, d, d, 0, 90);
+        path.AddArc(x, y + h - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
 }
-foreach ($entry in $IconMap.GetEnumerator()) {
-  $dir = Join-Path $ResDir $entry.Key
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
-  $src = Join-Path $Root "assets\app-icon\hicolor\$($entry.Value)\apps\ai.storyteller.effectcraft.png"
-  Copy-Item $src (Join-Path $dir 'ic_launcher.png') -Force
+"@
 }
+
+[EffectCraftIconGen]::Generate($SrcIcon1024, $ResDir)
+
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$ValuesDir = Join-Path $ResDir 'values'
+New-Item -ItemType Directory -Force -Path $ValuesDir | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $ValuesDir 'colors.xml'), @"
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#E0368F</color>
+</resources>
+"@, $Utf8NoBom)
+
+$AnyDpiDir = Join-Path $ResDir 'mipmap-anydpi-v26'
+New-Item -ItemType Directory -Force -Path $AnyDpiDir | Out-Null
+$AdaptiveIconXml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
+</adaptive-icon>
+"@
+[System.IO.File]::WriteAllText((Join-Path $AnyDpiDir 'ic_launcher.xml'), $AdaptiveIconXml, $Utf8NoBom)
+[System.IO.File]::WriteAllText((Join-Path $AnyDpiDir 'ic_launcher_round.xml'), $AdaptiveIconXml, $Utf8NoBom)
 
 $ResZip = Join-Path $Stage 'res.zip'
 Invoke-Native 'aapt2 compile' {

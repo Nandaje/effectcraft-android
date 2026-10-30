@@ -438,7 +438,7 @@ impl EffectcraftApp {
             area = area.raise_panel(panel);
         }
         let mut layout = self.ui.dock.layout.clone();
-        let portrait = body.height() > body.width() * 1.05 && body.width() < 780.0;
+        let portrait = body.height() > body.width() * 1.05;
         if portrait
             && let Some(root) = &mut layout.root
         {
@@ -596,12 +596,28 @@ impl EffectcraftApp {
 }
 
 /// A split path as `a`/`b` per level (first/second child).
+fn node_has_viewer(node: &Node<PanelKind>) -> bool {
+    let mut panels = Vec::new();
+    dock::node_panels(node, &mut panels);
+    panels.iter().any(|p| matches!(p, PanelKind::Composition | PanelKind::Layer | PanelKind::Footage | PanelKind::Viewer(_)))
+}
+
 fn adapt_portrait_node(node: &mut Node<PanelKind>, width: f32, is_root: bool) {
     if let Node::Split { axis, size, first, second } = node {
         if *axis == dock::SplitAxis::Horizontal {
             if is_root {
                 *axis = dock::SplitAxis::Vertical;
-                *size = dock::SplitSize::Ratio(0.74);
+                *size = dock::SplitSize::Ratio(0.75);
+                if let Node::Split { axis: second_axis, size: second_size, .. } = second.as_mut()
+                    && *second_axis == dock::SplitAxis::Vertical
+                {
+                    *second_axis = dock::SplitAxis::Horizontal;
+                    *second_size = dock::SplitSize::Ratio(0.42);
+                }
+            } else if width < 580.0 && node_has_viewer(second) && !node_has_viewer(first) {
+                std::mem::swap(first, second);
+                *axis = dock::SplitAxis::Vertical;
+                *size = dock::SplitSize::Ratio(0.58);
             } else {
                 let max_side = (width * 0.38).max(110.0);
                 match size {
